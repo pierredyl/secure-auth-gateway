@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"secure-auth-gateway/internal/auth"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -17,7 +20,6 @@ type RegisterRequest struct {
 
 type AuthHandler struct{}
 
-// Using a pointer for high efficiency.
 func NewAuthHandler() *AuthHandler {
 	return &AuthHandler{}
 }
@@ -25,13 +27,13 @@ func NewAuthHandler() *AuthHandler {
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 
-	//Check for broken JSON data
+	// Check for broken JSON data
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Malformed JSON payload"}`, http.StatusBadRequest)
 		return
 	}
 
-	//Validate struct constraints
+	// Validate struct constraints
 	if err := validate.Struct(req); err != nil {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -40,9 +42,38 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//TODO: Hash pass and save to DB
+	// Securely hash password
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, `{"error": "Internal Security Error"}`, http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Registration pre-validation succesful"})
+		"message":     "Registration pre-validation succesful",
+		"stored_hash": hashedPassword})
+}
 
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	// Only included in dev
+	superSecretKey := []byte("0123456789abcdef0123456789abcdef")
+
+	tokenMaker, err := auth.NewPasetoMaker(superSecretKey)
+	if err != nil {
+		log.Fatalf("Failed to creat PASETO token maker: %v", err)
+	}
+
+	// Verifying email + password would be here
+	// If that succeeds, issue a token
+
+	// Simulate issuing a token for "user_test", as an admin, and 15 minutes
+	token, err := tokenMaker.CreateToken("user_test", "admin", 15*time.Minute)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"access_token": token,
+		"message": "User recieves token, authed and authorized to resources"})
 }

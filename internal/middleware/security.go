@@ -1,12 +1,10 @@
-/*
-	Middleware to write secure headers on any handler.
-	Targetting OWASP A02:2025 Security Misconfiguration.
-*/
-
 package middleware
 
 import "net/http"
 
+/*	SecurityHeaders is the middleware that writes secure HTTP headers to any handler.
+
+ */
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		//Prevent framing (clickjacking) attacks
