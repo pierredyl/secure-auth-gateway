@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 )
 
 func main() {
@@ -35,6 +36,12 @@ func main() {
 
 	// 1. Public Route group
 	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Use(httprate.Limit(
+			5,                                       // 5 requests
+			1*time.Minute,                           // per minute
+			httprate.WithKeyFuncs(httprate.KeyByIP), // By IP
+		))
+
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 	})
@@ -44,7 +51,14 @@ func main() {
 		r.Use(middleware.AuthMiddleware(tokenMaker))
 		r.Use(middleware.RequireRole("admin"))
 
-		r.Get("/api/v1/admin/dashboard", adminHandler.Dashboard)
+		r.Use(httprate.Limit(
+			60,            // 60 requests
+			1*time.Minute, // per minute
+		))
+
+		r.Route("/api/v1/admin", func(r chi.Router) {
+			r.Get("/dashboard", adminHandler.Dashboard)
+		})
 	})
 
 	//Start the server
