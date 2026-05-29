@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"secure-auth-gateway/internal/auth"
 	"strings"
 )
@@ -34,6 +35,21 @@ func AuthMiddleware(maker *auth.PasetoMaker) func(http.Handler) http.Handler {
 			payload, err := maker.VerifyToken(token)
 			if err != nil {
 				http.Error(w, `{"error": "Unauthorized: invalid or expired token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Grab the current incoming request's IP address
+			currentIP := r.RemoteAddr
+			if forwardedIP := r.Header.Get("X-Forwarded-For"); forwardedIP != "" {
+				currentIP = forwardedIP
+			}
+
+			issuedAddr, _ := netip.ParseAddr(payload.IssuedIP)
+			currentAddr, _ := netip.ParseAddr(currentIP)
+
+			// If the current IP doesn't match the IP embedded in the token
+			if issuedAddr != currentAddr {
+				http.Error(w, "Unauthorized: Token context mismatch: different IPs", http.StatusUnauthorized)
 				return
 			}
 

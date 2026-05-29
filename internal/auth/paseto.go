@@ -18,6 +18,7 @@ type TokenPayload struct {
 	Role      string    `json:"role"`
 	IssuedAt  time.Time `json:"issued_at"`
 	ExpiredAt time.Time `json:"expired_at"`
+	IssuedIP  string    `json:"issued_ip"`
 }
 
 type PasetoMaker struct {
@@ -47,12 +48,13 @@ func NewPasetoMaker(symmetricKey []byte) (*PasetoMaker, error) {
 }
 
 // CreateToken takes a payload and encrypts it into a PASETO string.
-func (m *PasetoMaker) CreateToken(userID string, role string, duration time.Duration) (string, error) {
+func (m *PasetoMaker) CreateToken(userID string, role string, duration time.Duration, ip string) (string, error) {
 	payload := &TokenPayload{
 		UserID:    userID,
 		Role:      role,
 		IssuedAt:  time.Time{},
 		ExpiredAt: time.Now().Add(duration),
+		IssuedIP:  ip,
 	}
 
 	return m.paseto.Encrypt(m.symmetricKey, payload, nil)

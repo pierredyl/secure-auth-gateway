@@ -1,31 +1,19 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"secure-auth-gateway/internal/auth"
 	"secure-auth-gateway/internal/handlers"
-	"secure-auth-gateway/internal/middleware"
 
 	"github.com/go-chi/chi/v5"
-	chiMiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/httprate"
 )
 
 func main() {
-	// Router
 	r := chi.NewRouter()
-
-	// Middleware on the router
-	r.Use(chiMiddleware.Logger)
-	r.Use(chiMiddleware.Recoverer)
-	r.Use(middleware.SecurityHeaders)
-
-	//Start the handlers
-	authHandler := handlers.NewAuthHandler()
-	adminHandler := handlers.NewAdminHandler()
 
 	//Start the token maker
 	superSecretKey := []byte("0123456789abcdef0123456789abcdef")
@@ -34,30 +22,19 @@ func main() {
 		log.Fatalf("Failed to create the PASETO token maker")
 	}
 
-	// 1. Public Route group
-	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Use(httprate.Limit(
-			5,                                       // 5 requests
-			1*time.Minute,                           // per minute
-			httprate.WithKeyFuncs(httprate.KeyByIP), // By IP
-		))
+	// Local testing database
+	mockDB := &LocalTestDB{}
 
-		r.Post("/register", authHandler.Register)
-		r.Post("/login", authHandler.Login)
-	})
+	// Register secure routes
+	handlers.RegisterSecureRoutes(r, tokenMaker, mockDB, func(
+		admin chi.Router,
+		user chi.Router,
+		biling chi.Router,
+		support chi.Router) {
 
-	// 2. Admin group
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(tokenMaker))
-		r.Use(middleware.RequireRole("admin"))
-
-		r.Use(httprate.Limit(
-			60,            // 60 requests
-			1*time.Minute, // per minute
-		))
-
-		r.Route("/api/v1/admin", func(r chi.Router) {
-			r.Get("/dashboard", adminHandler.Dashboard)
+		admin.Get("/admin/dashboard", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"status": "success", "data": "Cargo manifests loaded."}`))
 		})
 	})
 
@@ -75,4 +52,22 @@ func main() {
 		log.Fatal(err)
 	}
 
+}
+
+// ─── TEMPORARY MOCK DATABASE FOR TESTING ─────────────────────────────────────
+type LocalTestDB struct{}
+
+func (m *LocalTestDB) VerifyUserCredentials(email, password string) (string, string, error) {
+	// a dummy admin account for testing
+	if email == "admin@test.com" && password == "SuperSecurePassword123" {
+		return "user_abc123", "admin", nil
+	}
+
+	// a dummy standard user account for testing role restrictions
+	if email == "user@test.com" && password == "AnotherSecurePassword123" {
+		return "user_xyz789", "user", nil
+	}
+
+	// Return an error if they pass wrong credentials
+	return "", "", errors.New("invalid email or password")
 }

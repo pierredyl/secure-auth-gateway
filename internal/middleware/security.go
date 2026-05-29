@@ -2,9 +2,8 @@ package middleware
 
 import "net/http"
 
-/*	SecurityHeaders is the middleware that writes secure HTTP headers to any handler.
+// SecurityHeaders is the middleware that writes secure HTTP headers to any route.
 
- */
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		//Prevent framing (clickjacking) attacks
