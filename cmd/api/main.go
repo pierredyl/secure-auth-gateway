@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"secure-auth-gateway/internal/auth"
@@ -16,8 +17,9 @@ func main() {
 	r := chi.NewRouter()
 
 	//Start the token maker
-	superSecretKey := []byte("0123456789abcdef0123456789abcdef")
-	tokenMaker, err := auth.NewPasetoMaker(superSecretKey)
+	key := os.Getenv("KEY")
+	keyBytes := []byte(key)
+	tokenMaker, err := auth.NewPasetoMaker(keyBytes)
 	if err != nil {
 		log.Fatalf("Failed to create the PASETO token maker")
 	}

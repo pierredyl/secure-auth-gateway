@@ -10,7 +10,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 
 		//Additionally deny from all ancestors using CSP
-		w.Header().Set("Content-Security-Policy", "frame-ancestors `none`;")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none';")
 
 		//Prevent MIME-Sniffing for XSS (cross site scripting)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
