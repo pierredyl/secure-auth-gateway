@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -29,12 +28,12 @@ func main() {
 	handlers.RegisterSecureRoutes(r, tokenMaker, mockDB, func(
 		admin chi.Router,
 		user chi.Router,
-		biling chi.Router,
-		support chi.Router) {
+		support chi.Router,
+		billing chi.Router) {
 
 		admin.Get("/admin/dashboard", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status": "success", "data": "Cargo manifests loaded."}`))
+			w.Write([]byte(`{"status": "success", "data": "Dashboard loaded."}`))
 		})
 	})
 
@@ -57,17 +56,6 @@ func main() {
 // ─── TEMPORARY MOCK DATABASE FOR TESTING ─────────────────────────────────────
 type LocalTestDB struct{}
 
-func (m *LocalTestDB) VerifyUserCredentials(email, password string) (string, string, error) {
-	// a dummy admin account for testing
-	if email == "admin@test.com" && password == "SuperSecurePassword123" {
-		return "user_abc123", "admin", nil
-	}
-
-	// a dummy standard user account for testing role restrictions
-	if email == "user@test.com" && password == "AnotherSecurePassword123" {
-		return "user_xyz789", "user", nil
-	}
-
-	// Return an error if they pass wrong credentials
-	return "", "", errors.New("invalid email or password")
+func (m *LocalTestDB) GrabUserInformation(email string) (userID, role, passwordHash string, err error) {
+	return
 }

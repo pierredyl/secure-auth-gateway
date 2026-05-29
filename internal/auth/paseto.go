@@ -12,26 +12,9 @@ var (
 	ErrInvalidToken = errors.New("invalid or tampered security token")
 )
 
-// TokenPayload holds the data embedded inside a PASETO token
-type TokenPayload struct {
-	UserID    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiredAt time.Time `json:"expired_at"`
-	IssuedIP  string    `json:"issued_ip"`
-}
-
 type PasetoMaker struct {
 	paseto       *paseto.V2
 	symmetricKey []byte
-}
-
-// Valid checks if the token is expired
-func (payload *TokenPayload) Valid() error {
-	if time.Now().After(payload.ExpiredAt) {
-		return ErrExpiredToken
-	}
-	return nil
 }
 
 // NewPasetoMaker is a token worker that only accepts symmetric keys with a length of 32 bytes.
@@ -47,14 +30,21 @@ func NewPasetoMaker(symmetricKey []byte) (*PasetoMaker, error) {
 
 }
 
+// TokenPayload holds the data embedded inside a PASETO token
+type TokenPayload struct {
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	IssuedAt  time.Time `json:"issued_at"`
+	ExpiredAt time.Time `json:"expired_at"`
+}
+
 // CreateToken takes a payload and encrypts it into a PASETO string.
-func (m *PasetoMaker) CreateToken(userID string, role string, duration time.Duration, ip string) (string, error) {
+func (m *PasetoMaker) CreateToken(userID string, role string, duration time.Duration) (string, error) {
 	payload := &TokenPayload{
 		UserID:    userID,
 		Role:      role,
-		IssuedAt:  time.Time{},
+		IssuedAt:  time.Now(),
 		ExpiredAt: time.Now().Add(duration),
-		IssuedIP:  ip,
 	}
 
 	return m.paseto.Encrypt(m.symmetricKey, payload, nil)
@@ -74,4 +64,12 @@ func (m *PasetoMaker) VerifyToken(token string) (*TokenPayload, error) {
 	}
 
 	return &payload, nil
+}
+
+// Valid checks if the token is expired
+func (payload *TokenPayload) Valid() error {
+	if time.Now().After(payload.ExpiredAt) {
+		return ErrExpiredToken
+	}
+	return nil
 }

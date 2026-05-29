@@ -22,10 +22,6 @@ type LoginRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
-type IdentityStore interface {
-	VerifyUserCredentials(email, password string) (userID string, role string, err error)
-}
-
 type AuthHandler struct {
 	tokenMaker *auth.PasetoMaker
 	db         IdentityStore
@@ -69,6 +65,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		"stored_hash": hashedPassword})
 }
 
+type UserInfo struct {
+	UserID   string
+	Password string
+	Role     string
+}
+
+type IdentityStore interface {
+	GrabUserInformation(email string) (userId, role, passwordHash string, err error)
+}
+
+// TODO: Enforce password verification
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 
@@ -84,25 +91,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Grab userID and role from external database
-	userID, role, err := h.db.VerifyUserCredentials(req.Email, req.Password)
+	// Grab user information from the database
+	userID, role, hashstring, err := h.db.GrabUserInformation(req.Email)
 	if err != nil {
-		http.Error(w, `{"error:" "Invalid email or password"}`, http.StatusUnauthorized)
+		http.Error(w, `{"error": "Forbidden."}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Also grab the IP
-	clientIP := r.RemoteAddr
-
-	// If gateway is behind a proxy
-	if forwardedIP := r.Header.Get("X-Fowarded-For"); forwardedIP != "" {
-		clientIP = forwardedIP
+	// Verify the hashstring
+	ok, err := auth.VerifyPassword(req.Password, hashstring)
+	if err != nil || !ok {
+		http.Error(w, `{"error": "Forbidden."}`, http.StatusUnauthorized)
+		return
 	}
 
 	// Create token for that user and role
-	token, err := h.tokenMaker.CreateToken(userID, role, 15*time.Minute, clientIP)
+	token, err := h.tokenMaker.CreateToken(userID, role, 15*time.Minute)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error": "Forbidden."}`, http.StatusForbidden)
 		return
 	}
 

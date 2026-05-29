@@ -32,6 +32,7 @@ func RegisterSecureRoutes(
 
 	// 1. Public Route group
 	r.Route("/api/v1/auth", func(r chi.Router) {
+		// TODO: if proxy is being used, the proxy will be hit by KeyByIP. Adjust for the forwarded ip
 		r.Use(httprate.Limit(
 			5,                                       // 5 requests
 			1*time.Minute,                           // per minute
