@@ -10,58 +10,34 @@ import (
 	"github.com/go-chi/httprate"
 )
 
-type CustomRouteBuilder func(
-	adminRouter chi.Router,
-	userRouter chi.Router,
-	supportRouter chi.Router,
-	billingRouter chi.Router,
-)
-
-func RegisterSecureRoutes(
-	r chi.Router,
-	tokenMaker *auth.PasetoMaker,
-	db IdentityStore,
-	buildRoutes CustomRouteBuilder,
-) {
-	// Middleware on the router
+func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, db IdentityStore) {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middleware.SecurityHeaders)
 
 	authHandler := NewAuthHandler(tokenMaker, db)
 
-	// 1. Public Route group
+	// Public: rate-limited, no auth required.
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		// TODO: if proxy is being used, the proxy will be hit by KeyByIP. Adjust for the forwarded ip
-		r.Use(httprate.Limit(
-			5,                                       // 5 requests
-			1*time.Minute,                           // per minute
-			httprate.WithKeyFuncs(httprate.KeyByIP), // By IP
-		))
-
+		r.Use(httprate.Limit(5, 1*time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP)))
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 	})
 
-	adminGroup := r.With(
-		middleware.AuthMiddleware(tokenMaker),
-		middleware.RequireRole("admin"),
-	)
+	// Protected: every route past here requires a valid token.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware(tokenMaker))
 
-	userGroup := r.With(
-		middleware.AuthMiddleware(tokenMaker),
-		middleware.RequireRole("user"),
-	)
+		// Admin-only.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole("admin"))
+			r.Get("/api/v1/admin/dashboard", AdminDashboard)
+		})
 
-	supportGroup := r.With(
-		middleware.AuthMiddleware(tokenMaker),
-		middleware.RequireRole("support"),
-	)
-
-	billingGroup := r.With(
-		middleware.AuthMiddleware(tokenMaker),
-		middleware.RequireRole("billing"),
-	)
-
-	buildRoutes(adminGroup, userGroup, billingGroup, supportGroup)
+		// User-only.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole("user"))
+			r.Get("/api/v1/user/profile", UserProfile)
+		})
+	})
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -22,20 +23,9 @@ func main() {
 	}
 
 	// Local testing database
-	mockDB := &LocalTestDB{}
+	mockDB := &MockDB{}
 
-	// Register secure routes
-	handlers.RegisterSecureRoutes(r, tokenMaker, mockDB, func(
-		admin chi.Router,
-		user chi.Router,
-		support chi.Router,
-		billing chi.Router) {
-
-		admin.Get("/admin/dashboard", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status": "success", "data": "Dashboard loaded."}`))
-		})
-	})
+	handlers.RegisterSecureRoutes(r, tokenMaker, mockDB)
 
 	//Start the server
 	srv := &http.Server{
@@ -53,9 +43,12 @@ func main() {
 
 }
 
-// ─── TEMPORARY MOCK DATABASE FOR TESTING ─────────────────────────────────────
-type LocalTestDB struct{}
+type MockDB struct {
+}
 
-func (m *LocalTestDB) GrabUserInformation(email string) (userID, role, passwordHash string, err error) {
-	return
+func (m *MockDB) GrabUserInformation(email string) (userID, role, passwordHash string, err error) {
+	if email == "admin@test.com" {
+		return "user_1", "admin", "$argon2id$v=19$m=19456,t=2,p=1$esBiVmzhQZE7NcN1t5EGXw$F3G/HYUIF+BtADQxq4e0bM01Ya+/vK8aHJUXzoG0Qa8", nil
+	}
+	return "", "", "", errors.New("user not fond")
 }
