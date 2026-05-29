@@ -54,3 +54,7 @@ func (m *MockDB) GrabUserInformation(email string) (userID, role, passwordHash s
 	}
 	return "", "", "", errors.New("user not fond")
 }
+
+func (m *MockDB) CreateUser(email, hashedPassword string) (err error) {
+	return
+}

@@ -34,6 +34,11 @@ func NewAuthHandler(tokenMaker *auth.PasetoMaker, db IdentityStore) *AuthHandler
 	}
 }
 
+type IdentityStore interface {
+	CreateUser(email, passwordHash string) (err error)
+	GrabUserInformation(email string) (userId, role, passwordHash string, err error)
+}
+
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 
@@ -59,23 +64,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.db.CreateUser(req.Email, hashedPassword); err != nil {
+		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{
-		"email":       req.Email,
-		"stored_hash": hashedPassword})
 }
 
-type UserInfo struct {
-	UserID   string
-	Password string
-	Role     string
-}
-
-type IdentityStore interface {
-	GrabUserInformation(email string) (userId, role, passwordHash string, err error)
-}
-
-// TODO: Enforce password verification
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 
