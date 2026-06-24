@@ -6,17 +6,23 @@ import (
 	"net/http"
 	"os"
 	"time"
-
 	"secure-auth-gateway/internal/auth"
 	"secure-auth-gateway/internal/handlers"
-
 	"github.com/go-chi/chi/v5"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Create the router
 	r := chi.NewRouter()
 
-	//Start the token maker
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Failed to load .env file")
+	}
+
+	// Start the token maker
 	key := os.Getenv("KEY")
 	keyBytes := []byte(key)
 	tokenMaker, err := auth.NewPasetoMaker(keyBytes)
