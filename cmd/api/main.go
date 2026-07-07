@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"time"
 	"secure-auth-gateway/internal/auth"
+	"secure-auth-gateway/internal/database"
 	"secure-auth-gateway/internal/handlers"
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
 )
@@ -21,6 +25,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load .env file")
 	}
+	fmt.Println(".env file loaded successfully")
 
 	// Start the token maker
 	key := os.Getenv("KEY")
@@ -29,6 +34,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create the PASETO token maker")
 	}
+	fmt.Println("PASETO Token Maker initialized successfully")
+
+	// Connect to Postgres Database
+	context := context.Background()
+	if err := database.Connect(context); err != nil {
+		log.Fatalf("Failed to connect to Postgres")
+	}
+	fmt.Println("Connected to Postgres Database")
+	defer database.Pool.Close()
 
 	// Local testing database
 	mockDB := &MockDB{}
