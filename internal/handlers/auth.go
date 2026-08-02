@@ -2,9 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"secure-auth-gateway/internal/auth"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -22,21 +27,22 @@ type LoginRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
+type UserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type AuthHandler struct {
 	tokenMaker *auth.PasetoMaker
-	db         IdentityStore
+	DB         *pgxpool.Pool
 }
 
-func NewAuthHandler(tokenMaker *auth.PasetoMaker, db IdentityStore) *AuthHandler {
+func NewAuthHandler(tokenMaker *auth.PasetoMaker, DB *pgxpool.Pool) *AuthHandler {
 	return &AuthHandler{
 		tokenMaker: tokenMaker,
-		db:         db,
+		DB:         DB,
 	}
-}
-
-type IdentityStore interface {
-	CreateUser(email, passwordHash string) (err error)
-	GrabUserInformation(email string) (userId, role, passwordHash string, err error)
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -64,12 +70,37 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.CreateUser(req.Email, hashedPassword); err != nil {
+	// Create the query
+	query := `
+		INSERT INTO users (email, password_hash)
+		VALUES ($1, $2)
+		RETURNING id, email, created_at
+	`
+
+	// Run the query in the database
+	var resp UserResponse
+	err = h.DB.QueryRow(r.Context(), query, req.Email, hashedPassword).
+		Scan(&resp.ID, &resp.Email, &resp.CreatedAt)
+
+	if err != nil {
+
+		// Check if duplicate email
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Email already registered",
+			})
+			return
+		}
+
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -88,11 +119,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Grab user information from the database
-	userID, role, hashstring, err := h.db.GrabUserInformation(req.Email)
-	if err != nil {
-		http.Error(w, `{"error": "Forbidden."}`, http.StatusUnauthorized)
-		return
-	}
+	hashstring := "placeholder"
 
 	// Verify the hashstring
 	ok, err := auth.VerifyPassword(req.Password, hashstring)
@@ -102,16 +129,4 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create token for that user and role
-	token, err := h.tokenMaker.CreateToken(userID, role, 15*time.Minute)
-	if err != nil {
-		http.Error(w, `{"error": "Forbidden."}`, http.StatusForbidden)
-		return
-	}
-
-	// Return token
-	json.NewEncoder(w).Encode(map[string]string{
-		"userID":       userID,
-		"role":         role,
-		"access_token": token,
-	})
 }

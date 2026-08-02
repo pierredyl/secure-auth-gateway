@@ -10,12 +10,10 @@ import (
 	"github.com/go-chi/httprate"
 )
 
-func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, db IdentityStore) {
+func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandler *AuthHandler) {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middleware.SecurityHeaders)
-
-	authHandler := NewAuthHandler(tokenMaker, db)
 
 	// Public: rate-limited, no auth required.
 	r.Route("/api/v1/auth", func(r chi.Router) {

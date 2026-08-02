@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"errors"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"secure-auth-gateway/internal/auth"
-	"secure-auth-gateway/internal/database"
+	database "secure-auth-gateway/internal/db"
 	"secure-auth-gateway/internal/handlers"
 	"time"
 
@@ -29,7 +29,7 @@ func main() {
 
 	// Start the token maker
 	key := os.Getenv("KEY")
-	keyBytes := []byte(key)
+	keyBytes, err := hex.DecodeString(key)
 	tokenMaker, err := auth.NewPasetoMaker(keyBytes)
 	if err != nil {
 		log.Fatalf("Failed to create the PASETO token maker")
@@ -37,17 +37,19 @@ func main() {
 	fmt.Println("PASETO Token Maker initialized successfully")
 
 	// Connect to Postgres Database
-	context := context.Background()
-	if err := database.Connect(context); err != nil {
+	ctx := context.Background()
+	if err := database.Connect(ctx); err != nil {
 		log.Fatalf("Failed to connect to Postgres")
 	}
 	fmt.Println("Connected to Postgres Database")
 	defer database.Pool.Close()
 
-	// Local testing database
-	mockDB := &MockDB{}
+	// Start the AuthHandler
+	authHandler := handlers.NewAuthHandler(tokenMaker, database.Pool)
+	fmt.Println("AuthHandler started")
 
-	handlers.RegisterSecureRoutes(r, tokenMaker, mockDB)
+	// Register the available API Routes
+	handlers.RegisterSecureRoutes(r, tokenMaker, authHandler)
 
 	//Start the server
 	srv := &http.Server{
@@ -63,18 +65,4 @@ func main() {
 		log.Fatal(err)
 	}
 
-}
-
-type MockDB struct {
-}
-
-func (m *MockDB) GrabUserInformation(email string) (userID, role, passwordHash string, err error) {
-	if email == "admin@test.com" {
-		return "user_1", "admin", "$argon2id$v=19$m=19456,t=2,p=1$esBiVmzhQZE7NcN1t5EGXw$F3G/HYUIF+BtADQxq4e0bM01Ya+/vK8aHJUXzoG0Qa8", nil
-	}
-	return "", "", "", errors.New("user not fond")
-}
-
-func (m *MockDB) CreateUser(email, hashedPassword string) (err error) {
-	return
 }
