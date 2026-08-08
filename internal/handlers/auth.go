@@ -50,6 +50,7 @@ func NewAuthHandler(tokenMaker *auth.PasetoMaker, DB *pgxpool.Pool) *AuthHandler
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
+	query := ``
 
 	// Check for broken JSON data
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -66,6 +67,26 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var exists int
+	// Query the database to check if user exists before hashing password
+	query = `
+		SELECT 1 FROM users WHERE email = $1
+	`
+
+	err := h.DB.QueryRow(r.Context(), query, req.Email).Scan(&exists)
+	// If there is no error, email was found
+	if err == nil {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
+		return
+	}
+
+	// If there is some error not related to email not found
+	if !errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
+		return
+	}
+
 	// Securely hash password
 	hashedPassword, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -74,29 +95,23 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the query
-	query := `
+	query = `
 		INSERT INTO users (email, password_hash)
 		VALUES ($1, $2)
 		RETURNING id, email, created_at
 	`
-
-	// Run the query in the database
 	var resp UserResponse
+	// Run the query in the database
 	err = h.DB.QueryRow(r.Context(), query, req.Email, hashedPassword).
 		Scan(&resp.ID, &resp.Email, &resp.CreatedAt)
 
 	if err != nil {
-
-		// Check if duplicate email
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Email already registered",
-			})
+			json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
 			return
 		}
-
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
 		return
 	}

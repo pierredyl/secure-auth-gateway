@@ -11,7 +11,7 @@ type contextKey string
 
 const UserPayloadKey contextKey = "user_payload"
 
-func AuthMiddleware(maker *auth.PasetoMaker) func(http.Handler) http.Handler {
+func AuthenticateToken(maker *auth.PasetoMaker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Grab the authorization header

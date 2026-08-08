@@ -24,7 +24,7 @@ func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandle
 
 	// Protected: every route past here requires a valid token.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(tokenMaker))
+		r.Use(middleware.AuthenticateToken(tokenMaker))
 
 		// Admin-only.
 		r.Group(func(r chi.Router) {
