@@ -17,7 +17,7 @@ func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandle
 
 	// Public: rate-limited, no auth required.
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Use(httprate.Limit(5, 1*time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP)))
+		r.Use(httprate.Limit(10, 1*time.Minute, httprate.WithKeyFuncs(httprate.KeyByIP)))
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 	})
