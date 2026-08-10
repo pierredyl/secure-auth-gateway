@@ -211,19 +211,21 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,                    // JS cannot read this cookie — mitigates XSS token theft
-		Secure:   false,                   // only sent over HTTPS (disable for local http:// dev)
-		SameSite: http.SameSiteStrictMode, // mitigates CSRF
-		Expires:  time.Now().Add(15 * time.Minute),
-	})
+	/*
+		http.SetCookie(w, &http.Cookie{
+			Name:     "access_token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,                    // JS cannot read this cookie — mitigates XSS token theft
+			Secure:   false,                   // only sent over HTTPS (disable for local http:// dev)
+			SameSite: http.SameSiteStrictMode, // mitigates CSRF
+			Expires:  time.Now().Add(15 * time.Minute),
+		})
+	*/
 
+	// Return that token in the response
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":    resp.ID,
-		"email": resp.Email,
+		"token": token,
 	})
 }
