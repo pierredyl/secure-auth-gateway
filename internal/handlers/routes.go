@@ -18,8 +18,7 @@ func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandle
 	r.Use(middleware.SecurityHeaders)
 	r.Use(chiMiddleware.ClientIPFromXFF("172.16.0.0/12"))
 
-	// Public, unauthenticated and deliberately not rate-limited: this is the
-	// baseline capacity target for load testing.
+	// Quick health check endpoint, public, no rate limits.
 	r.Get("/api/v1/health", Health)
 
 	// Public: rate-limited, no auth required.
@@ -41,13 +40,11 @@ func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandle
 		// Admin-only.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireRole("admin"))
-			r.Get("/api/v1/admin/dashboard", AdminDashboard)
 		})
 
 		// User-only.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireRole("user"))
-			r.Get("/api/v1/user/profile", UserProfile)
 		})
 	})
 }
