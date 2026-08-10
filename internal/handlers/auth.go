@@ -3,8 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"secure-auth-gateway/internal/auth"
+	"secure-auth-gateway/internal/ratelimit"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +19,28 @@ import (
 )
 
 var validate = validator.New()
+
+// dummyHash is verified against when the email doesn't exist, so an unknown
+// address costs the same wall-clock time as a wrong password. Without it, the
+// response time alone tells an attacker which accounts are real.
+var dummyHash = mustDummyHash()
+
+func mustDummyHash() string {
+	h, err := auth.HashPassword("dummy-password-for-constant-time-login")
+	if err != nil {
+		log.Fatalf("Failed to precompute the login dummy hash: %v", err)
+	}
+	return h
+}
+
+// respondInvalidCredentials is the single response for every failed login. Both
+// callers must stay byte-identical — a difference in status, body, or headers is
+// an email enumeration oracle.
+func respondInvalidCredentials(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+}
 
 // Password 15 characters minimum to match NIST standards. Max is 72 for Bcrypt algorithm.
 type RegisterRequest struct {
@@ -136,6 +161,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Checked before the DB query and before hashing, so a locked account costs
+	// an attacker nothing of ours to keep hammering.
+	if locked, retryAfter := ratelimit.IsLocked(r.Context(), req.Email); locked {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Too many failed attempts. Try again later."})
+		return
+	}
+
 	// Grab user information from the database by their email
 	query := `
 		SELECT id, email, password_hash, created_at, role
@@ -149,9 +184,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Email didn't match any in the DB
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// deliberately vague — see note below
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+			// Burn the same time a real verification would take before answering.
+			auth.VerifyPassword(req.Password, dummyHash)
+			ratelimit.RecordFailure(r.Context(), req.Email)
+			respondInvalidCredentials(w)
 			return
 		}
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
@@ -161,9 +197,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Verify the hashstring
 	ok, err := auth.VerifyPassword(req.Password, resp.PasswordHash)
 	if err != nil || !ok {
-		http.Error(w, `{"error": "Forbidden."}`, http.StatusUnauthorized)
+		ratelimit.RecordFailure(r.Context(), req.Email)
+		respondInvalidCredentials(w)
 		return
 	}
+
+	ratelimit.ResetFailures(r.Context(), req.Email)
 
 	// Create token for that user and role
 	token, err := h.tokenMaker.CreateToken(resp.ID.String(), resp.Role, 15*time.Minute)

@@ -4,27 +4,39 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var Pool *pgxpool.Pool
 
+const (
+	connectRetries = 10
+	connectBackoff = 2 * time.Second
+)
+
 func Connect(ctx context.Context) error {
 	// Pull from ENV variable for database URL
 	connString := os.Getenv("DATABASE_URL")
 
-	// Establish the connection
-	pool, err := pgxpool.New(ctx, connString)
-	if err != nil {
-		return fmt.Errorf("unable to create connection pool: %w", err)
+	var pool *pgxpool.Pool
+	var err error
+
+	for attempt := 1; attempt <= connectRetries; attempt++ {
+		pool, err = pgxpool.New(ctx, connString)
+		if err == nil {
+			if err = pool.Ping(ctx); err == nil {
+				Pool = pool
+				return nil
+			}
+			pool.Close()
+		}
+
+		if attempt < connectRetries {
+			time.Sleep(connectBackoff)
+		}
 	}
 
-	// Ping the DB to check connection is valid
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("unable to ping database: %w", err)
-	}
-
-	Pool = pool
-	return nil
+	return fmt.Errorf("unable to connect to database after %d attempts: %w", connectRetries, err)
 }
