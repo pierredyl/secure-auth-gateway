@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/httprate"
 )
 
-func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandler *AuthHandler) {
+func RegisterSecureRoutes(r chi.Router, accessTokenMaker *auth.PasetoMaker, refreshTokenMaker *auth.PasetoMaker, authHandler *AuthHandler) {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middleware.SecurityHeaders)
@@ -31,20 +31,27 @@ func RegisterSecureRoutes(r chi.Router, tokenMaker *auth.PasetoMaker, authHandle
 		))
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
+		r.Post("/refresh", authHandler.Refresh)
 	})
 
 	// Protected: every route past here requires a valid token.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthenticateToken(tokenMaker))
+		r.Use(middleware.AuthenticateToken(accessTokenMaker))
 
 		// Admin-only.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireRole("admin"))
+			r.Route("/api/v1/admin", func(r chi.Router) {
+				r.Get("/health", adminHealth)
+			})
 		})
 
 		// User-only.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireRole("user"))
+			r.Route("/api/v1/user/", func(r chi.Router) {
+				r.Get("/health", userHealth)
+			})
 		})
 	})
 }

@@ -29,14 +29,33 @@ func main() {
 		fmt.Println(".env file loaded successfully")
 	}
 
-	// Start the token maker
-	key := os.Getenv("KEY")
-	keyBytes, err := hex.DecodeString(key)
-	tokenMaker, err := auth.NewPasetoMaker(keyBytes)
+	// Start the token makers
+	access_token_key := os.Getenv("ACCESS_TOKEN_KEY")
+
+	access_token_key_bytes, err := hex.DecodeString(access_token_key)
 	if err != nil {
-		log.Fatalf("Failed to create the PASETO token maker")
+		log.Fatalf("Failed to decode string")
 	}
-	fmt.Println("PASETO Token Maker initialized successfully")
+
+	accessTokenMaker, err := auth.NewPasetoMaker(access_token_key_bytes)
+	if err != nil {
+		log.Fatalf("Failed to create the PASETO access token maker")
+	}
+	fmt.Println("PASETO Access Token Maker initialized successfully")
+
+	// Refresh token
+	refresh_token_key := os.Getenv("REFRESH_TOKEN_KEY")
+
+	refresh_token_key_bytes, err := hex.DecodeString(refresh_token_key)
+	if err != nil {
+		log.Fatalf("Failed to decode string")
+	}
+
+	refreshTokenMaker, err := auth.NewPasetoMaker(refresh_token_key_bytes)
+	if err != nil {
+		log.Fatalf("Failed to create the PASETO refresh token maker")
+	}
+	fmt.Println("PASETO Refresh Token Maker initialized successfully")
 
 	// Connect to Postgres Database
 	ctx := context.Background()
@@ -59,11 +78,11 @@ func main() {
 	fmt.Println("Connected to Redis")
 
 	// Start the AuthHandler
-	authHandler := handlers.NewAuthHandler(tokenMaker, database.Pool)
+	authHandler := handlers.NewAuthHandler(accessTokenMaker, refreshTokenMaker, database.Pool)
 	fmt.Println("AuthHandler started")
 
 	// Register the available API Routes
-	handlers.RegisterSecureRoutes(r, tokenMaker, authHandler)
+	handlers.RegisterSecureRoutes(r, accessTokenMaker, refreshTokenMaker, authHandler)
 
 	//Start the server
 	port := os.Getenv("PORT")

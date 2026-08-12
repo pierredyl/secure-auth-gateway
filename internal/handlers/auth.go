@@ -54,22 +54,23 @@ type LoginRequest struct {
 }
 
 type UserResponse struct {
-	ID           uuid.UUID `json:"id"`
-	Role         string    `json:"role"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID        uuid.UUID `json:"id"`
+	Role      string    `json:"role"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type AuthHandler struct {
-	tokenMaker *auth.PasetoMaker
-	DB         *pgxpool.Pool
+	accessTokenMaker  *auth.PasetoMaker
+	refreshTokenMaker *auth.PasetoMaker
+	DB                *pgxpool.Pool
 }
 
-func NewAuthHandler(tokenMaker *auth.PasetoMaker, DB *pgxpool.Pool) *AuthHandler {
+func NewAuthHandler(accessTokenMaker *auth.PasetoMaker, refreshTokenMaker *auth.PasetoMaker, DB *pgxpool.Pool) *AuthHandler {
 	return &AuthHandler{
-		tokenMaker: tokenMaker,
-		DB:         DB,
+		accessTokenMaker:  accessTokenMaker,
+		refreshTokenMaker: refreshTokenMaker,
+		DB:                DB,
 	}
 }
 
@@ -123,12 +124,12 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	query = `
 		INSERT INTO users (email, password_hash)
 		VALUES ($1, $2)
-		RETURNING id, email, created_at
+		RETURNING id, email, created_at, role
 	`
 	var resp UserResponse
 	// Run the query in the database
 	err = h.DB.QueryRow(r.Context(), query, req.Email, hashedPassword).
-		Scan(&resp.ID, &resp.Email, &resp.CreatedAt)
+		Scan(&resp.ID, &resp.Email, &resp.CreatedAt, &resp.Role)
 
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -143,7 +144,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(map[string]any{
+		"message": "User successfully registered.",
+		"data":    resp,
+	})
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -161,8 +165,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Checked before the DB query and before hashing, so a locked account costs
-	// an attacker nothing of ours to keep hammering.
+	// Check if the user account is locked before quering the DB
 	if locked, retryAfter := ratelimit.IsLocked(r.Context(), req.Email); locked {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
@@ -178,8 +181,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		WHERE email = $1
 	`
 	var resp UserResponse
+	var passwordHash string
 	err := h.DB.QueryRow(r.Context(), query, req.Email).
-		Scan(&resp.ID, &resp.Email, &resp.PasswordHash, &resp.CreatedAt, &resp.Role)
+		Scan(&resp.ID, &resp.Email, &passwordHash, &resp.CreatedAt, &resp.Role)
 
 	// Email didn't match any in the DB
 	if err != nil {
@@ -195,7 +199,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the hashstring
-	ok, err := auth.VerifyPassword(req.Password, resp.PasswordHash)
+	ok, err := auth.VerifyPassword(req.Password, passwordHash)
 	if err != nil || !ok {
 		ratelimit.RecordFailure(r.Context(), req.Email)
 		respondInvalidCredentials(w)
@@ -204,28 +208,30 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	ratelimit.ResetFailures(r.Context(), req.Email)
 
-	// Create token for that user and role
-	token, err := h.tokenMaker.CreateToken(resp.ID.String(), resp.Role, 15*time.Minute)
+	// Create a new access token for that user and role
+	accessToken, err := h.accessTokenMaker.CreateAccessToken(resp.ID.String(), resp.Role, 15*time.Minute)
 	if err != nil {
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
 		return
 	}
 
-	/*
-		http.SetCookie(w, &http.Cookie{
-			Name:     "access_token",
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,                    // JS cannot read this cookie — mitigates XSS token theft
-			Secure:   false,                   // only sent over HTTPS (disable for local http:// dev)
-			SameSite: http.SameSiteStrictMode, // mitigates CSRF
-			Expires:  time.Now().Add(15 * time.Minute),
-		})
-	*/
+	// Create a new refresh token for that user
+	// refreshToken, err := h.refreshTokenMaker.CreateRefreshToken(resp.ID.String(), 30 * 24 * time.Hour)
 
-	// Return that token in the response
+	// Return token in response
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
-		"token": token,
+		"message": "User successfully logged in.",
+		"token":   accessToken,
 	})
+}
+
+/*
+func (*AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+
+}
+*/
+
+func (*AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+
 }

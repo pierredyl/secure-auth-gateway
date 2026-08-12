@@ -14,7 +14,7 @@ func RequireRole(allowedRole string) func(http.Handler) http.Handler {
 				return
 			}
 
-			userPayload := val.(*auth.TokenPayload)
+			userPayload := val.(*auth.AccessTokenPayload)
 
 			if userPayload.Role != allowedRole {
 				http.Error(w, `{"error": "Forbidden: Insufficient permissions"}`, http.StatusForbidden)

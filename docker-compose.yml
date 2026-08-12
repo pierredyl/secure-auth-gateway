@@ -30,7 +30,8 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      KEY: ${KEY}
+      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,7 +43,8 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      KEY: ${KEY}
+      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,7 +56,8 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      KEY: ${KEY}
+      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
     depends_on:
       postgres:
         condition: service_healthy
