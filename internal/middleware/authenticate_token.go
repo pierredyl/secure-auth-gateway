@@ -31,7 +31,7 @@ func AuthenticateToken(maker *auth.PasetoMaker) func(http.Handler) http.Handler 
 			}
 
 			token := fields[1]
-			payload, err := maker.VerifyToken(token)
+			payload, err := maker.VerifyAccessToken(token)
 			if err != nil {
 				http.Error(w, `{"error": "Unauthorized: invalid or expired token"}`, http.StatusUnauthorized)
 				return

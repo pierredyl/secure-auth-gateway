@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"net/http"
-	"secure-auth-gateway/internal/auth"
 	"secure-auth-gateway/internal/middleware"
-	"secure-auth-gateway/internal/ratelimit"
+	"secure-auth-gateway/internal/redis_db"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,7 +11,7 @@ import (
 	"github.com/go-chi/httprate"
 )
 
-func RegisterSecureRoutes(r chi.Router, accessTokenMaker *auth.PasetoMaker, refreshTokenMaker *auth.PasetoMaker, authHandler *AuthHandler) {
+func RegisterSecureRoutes(r chi.Router, authHandler *AuthHandler) {
 	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middleware.SecurityHeaders)
@@ -27,7 +26,7 @@ func RegisterSecureRoutes(r chi.Router, accessTokenMaker *auth.PasetoMaker, refr
 			httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
 				return httprate.CanonicalizeIP(chiMiddleware.GetClientIP(r.Context())), nil
 			}),
-			httprate.WithLimitCounter(ratelimit.LimitCounter),
+			httprate.WithLimitCounter(redis_db.LimitCounter),
 		))
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
@@ -36,7 +35,7 @@ func RegisterSecureRoutes(r chi.Router, accessTokenMaker *auth.PasetoMaker, refr
 
 	// Protected: every route past here requires a valid token.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthenticateToken(accessTokenMaker))
+		r.Use(middleware.AuthenticateToken(authHandler.accessTokenMaker))
 
 		// Admin-only.
 		r.Group(func(r chi.Router) {

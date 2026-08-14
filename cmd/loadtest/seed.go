@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"secure-auth-gateway/internal/ratelimit"
+	"secure-auth-gateway/internal/redis_db"
 	"strings"
 	"time"
 
@@ -110,7 +110,7 @@ func clearLockouts(ctx context.Context, addr string, accts []account) error {
 
 	keys := make([]string, len(accts))
 	for i, a := range accts {
-		keys[i] = ratelimit.LockoutKey(a.email)
+		keys[i] = redis_db.LockoutKey(a.email)
 	}
 
 	n, err := rdb.Del(ctx, keys...).Result()

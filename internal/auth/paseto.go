@@ -31,47 +31,55 @@ func NewPasetoMaker(key []byte) (*PasetoMaker, error) {
 
 }
 
+type TokenMeta struct {
+	IssuedAt  time.Time
+	ExpiredAt time.Time
+}
+
 // AccessTokenPayload holds the data embedded inside a PASETO access token
 type AccessTokenPayload struct {
-	UserID    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiredAt time.Time `json:"expired_at"`
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+	TokenMeta
 }
 
 type RefreshTokenPayload struct {
-	TokenID   string    `json:"token_id"`
-	UserID    string    `json:"user_id"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiredAt time.Time `json:"expired_at"`
+	TokenID string `json:"token_id"`
+	UserID  string `json:"user_id"`
+	TokenMeta
 }
 
 // CreateAccessToken takes a payload and encrypts it into a PASETO string.
 func (m *PasetoMaker) CreateAccessToken(userID string, role string, duration time.Duration) (string, error) {
 	payload := &AccessTokenPayload{
-		UserID:    userID,
-		Role:      role,
-		IssuedAt:  time.Now(),
-		ExpiredAt: time.Now().Add(duration),
+		UserID: userID,
+		Role:   role,
+		TokenMeta: TokenMeta{
+			IssuedAt:  time.Now(),
+			ExpiredAt: time.Now().Add(duration),
+		},
 	}
 
 	return m.paseto.Encrypt(m.key, payload, nil)
 }
 
 // CreateRefreshToken creates a refresh token using the same PASETO flow
-func (m *PasetoMaker) CreateRefreshToken(userID string, duration time.Duration) (string, error) {
+func (m *PasetoMaker) CreateRefreshToken(userID string, duration time.Duration) (string, string, error) {
+	tokenID := uuid.NewString()
 	payload := &RefreshTokenPayload{
-		TokenID:   uuid.NewString(),
-		UserID:    userID,
-		IssuedAt:  time.Now(),
-		ExpiredAt: time.Now().Add(duration),
+		TokenID: tokenID,
+		UserID:  userID,
+		TokenMeta: TokenMeta{
+			IssuedAt:  time.Now(),
+			ExpiredAt: time.Now().Add(duration),
+		},
 	}
-
-	return m.paseto.Encrypt(m.key, payload, nil)
+	token, err := m.paseto.Encrypt(m.key, payload, nil)
+	return token, tokenID, err
 }
 
-// VerifyToken decrypts and validates a PASETO string
-func (m *PasetoMaker) VerifyToken(token string) (*AccessTokenPayload, error) {
+// VerifyAccessToken decrypts an AccessToken and validates it
+func (m *PasetoMaker) VerifyAccessToken(token string) (*AccessTokenPayload, error) {
 	var payload AccessTokenPayload
 
 	err := m.paseto.Decrypt(token, m.key, &payload, nil)
@@ -82,8 +90,6 @@ func (m *PasetoMaker) VerifyToken(token string) (*AccessTokenPayload, error) {
 	// Check if the access token has expired
 	if err := payload.Valid(); err != nil {
 		if err == ErrExpiredToken {
-			// Check if refresh token exists and valid
-			// If there is a refresh token, issue a new access token, rotate the refresh token
 			return nil, err
 		}
 		return nil, err
@@ -92,8 +98,24 @@ func (m *PasetoMaker) VerifyToken(token string) (*AccessTokenPayload, error) {
 	return &payload, nil
 }
 
+func (m *PasetoMaker) VerifyRefreshToken(token string) (*RefreshTokenPayload, error) {
+	var payload RefreshTokenPayload
+
+	err := m.paseto.Decrypt(token, m.key, &payload, nil)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	err = payload.TokenMeta.Valid()
+	if err != nil {
+		return nil, ErrExpiredToken
+	}
+
+	return &payload, nil
+}
+
 // Valid checks if the token is expired
-func (payload *AccessTokenPayload) Valid() error {
+func (payload *TokenMeta) Valid() error {
 	if time.Now().After(payload.ExpiredAt) {
 		return ErrExpiredToken
 	}

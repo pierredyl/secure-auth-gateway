@@ -10,9 +10,8 @@ import (
 	"secure-auth-gateway/internal/auth"
 	database "secure-auth-gateway/internal/db"
 	"secure-auth-gateway/internal/handlers"
+	"secure-auth-gateway/internal/redis_db"
 	"time"
-
-	"secure-auth-gateway/internal/ratelimit"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
@@ -72,13 +71,13 @@ func main() {
 	fmt.Println("Migrations applied successfully")
 
 	// Connect to Redis
-	if err := ratelimit.Connect(ctx); err != nil {
+	if err := redis_db.Connect(ctx); err != nil {
 		log.Fatalf("Failed to connect to Redis")
 	}
 	fmt.Println("Connected to Redis")
 
 	// Start the AuthHandler
-	authHandler := handlers.NewAuthHandler(accessTokenMaker, refreshTokenMaker, database.Pool)
+	authHandler := handlers.NewAuthHandler(accessTokenMaker, refreshTokenMaker, redis_db.Client, database.Pool)
 	fmt.Println("AuthHandler started")
 
 	// Register the available API Routes
