@@ -1,29 +1,30 @@
-package middleware
+package pasetoauth
 
 import (
 	"context"
 	"net/http"
-	"secure-auth-gateway/internal/auth"
 	"strings"
 )
 
 type contextKey string
 
+// UserPayloadKey is the context key AuthenticateToken stores the verified
+// *AccessTokenPayload under.
 const UserPayloadKey contextKey = "user_payload"
 
-func AuthenticateToken(maker *auth.PasetoMaker) func(http.Handler) http.Handler {
+// AuthenticateToken returns middleware that rejects requests without a valid
+// "Authorization: Bearer <token>" header, and otherwise stores the verified
+// token's payload in the request context under UserPayloadKey.
+func AuthenticateToken(verifier *Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Grab the authorization header
 			authHeader := r.Header.Get("Authorization")
 
-			// Check if header exists
 			if authHeader == "" {
 				http.Error(w, `{"error": "Missing authorization header"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// Expecting format "Bearer <token>"
 			fields := strings.Fields(authHeader)
 			if len(fields) < 2 || strings.ToLower(fields[0]) != "bearer" {
 				http.Error(w, `{"error": "Invalid authorization format"}`, http.StatusUnauthorized)
@@ -31,7 +32,7 @@ func AuthenticateToken(maker *auth.PasetoMaker) func(http.Handler) http.Handler 
 			}
 
 			token := fields[1]
-			payload, err := maker.VerifyAccessToken(token)
+			payload, err := verifier.VerifyAccessToken(token)
 			if err != nil {
 				http.Error(w, `{"error": "Unauthorized: invalid or expired token"}`, http.StatusUnauthorized)
 				return
@@ -39,7 +40,6 @@ func AuthenticateToken(maker *auth.PasetoMaker) func(http.Handler) http.Handler 
 
 			ctx := context.WithValue(r.Context(), UserPayloadKey, payload)
 			next.ServeHTTP(w, r.WithContext(ctx))
-
 		})
 	}
 }

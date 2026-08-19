@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "started_utc": "2026-08-18T21:32:59.514139663Z",
+  "concurrency": 500,
+  "target": "health",
+  "path": "/api/v1/health",
+  "url": "http://nginx:80",
+  "duration": "15s",
+  "warmup": "5s",
+  "think": "0s",
+  "timeout": "10s",
+  "ramp": "0s",
+  "closed_loop": true,
+  "phases": [
+    {
+      "name": "health",
+      "window_start_utc": "2026-08-18T21:32:59.514139663Z",
+      "window_end_utc": "2026-08-18T21:33:14.514139663Z",
+      "measured_seconds": 15,
+      "wall_seconds": 20.044764846,
+      "total_requests": 138880,
+      "accepted": 138880,
+      "transport_errors": 0,
+      "non_ok": 0,
+      "failed": 0,
+      "rps": 9258.666666666666,
+      "accepted_rps": 9258.666666666666,
+      "ok_status": 200,
+      "all_requests": {
+        "n": 138880,
+        "min_ms": 0.278,
+        "p50_ms": 45.442,
+        "p95_ms": 126.714,
+        "p99_ms": 177.506,
+        "p999_ms": 225.926,
+        "max_ms": 292.094,
+        "mean_ms": 53.945
+      },
+      "accepted_requests": {
+        "n": 138880,
+        "min_ms": 0.278,
+        "p50_ms": 45.442,
+        "p95_ms": 126.714,
+        "p99_ms": 177.506,
+        "p999_ms": 225.926,
+        "max_ms": 292.094,
+        "mean_ms": 53.945
+      },
+      "errors": {},
+      "status_codes": {
+        "200": 138880
+      },
+      "censored": false
+    }
+  ]
+}

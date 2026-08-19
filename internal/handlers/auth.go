@@ -62,13 +62,13 @@ type UserResponse struct {
 }
 
 type AuthHandler struct {
-	accessTokenMaker  *auth.PasetoMaker
-	refreshTokenMaker *auth.PasetoMaker
+	accessTokenMaker  *auth.AccessTokenSigner
+	refreshTokenMaker *auth.RefreshTokenMaker
 	redisClient       *redis.Client
 	DB                *pgxpool.Pool
 }
 
-func NewAuthHandler(accessTokenMaker *auth.PasetoMaker, refreshTokenMaker *auth.PasetoMaker, redisClient *redis.Client, DB *pgxpool.Pool) *AuthHandler {
+func NewAuthHandler(accessTokenMaker *auth.AccessTokenSigner, refreshTokenMaker *auth.RefreshTokenMaker, redisClient *redis.Client, DB *pgxpool.Pool) *AuthHandler {
 	return &AuthHandler{
 		accessTokenMaker:  accessTokenMaker,
 		refreshTokenMaker: refreshTokenMaker,
@@ -89,6 +89,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Validate struct constraints
 	if err := validate.Struct(req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Validation failed: Email must be valid, Password must be 15-72 characters.",
@@ -105,6 +106,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	err := h.DB.QueryRow(r.Context(), query, req.Email).Scan(&exists)
 	// If there is no error, email was found
 	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
 		return
@@ -139,6 +141,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]string{"error": "Email already registered"})
 			return
@@ -250,6 +253,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return access token in JSON response
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
 		"message":      "User successfully logged in.",
@@ -355,6 +359,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Return access token in JSON response
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
 		"message":      "Access token refreshed.",

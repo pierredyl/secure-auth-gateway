@@ -1,0 +1,36 @@
+# The load generator, containerised so it can run INSIDE the compose network.
+#
+# Running it on the Windows host means every request crosses Docker Desktop's
+# port-forwarding relay, which measured ~45ms of the ~47ms client-side latency
+# while nginx's own log reported 2ms. From in here the relay is gone and the
+# numbers describe the service.
+#
+# It also matters for the fixed-rate (-rate) mode: dispatching on a sub-millisecond
+# schedule needs timer resolution Windows does not reliably provide and Linux does.
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o loadtest ./cmd/loadtest
+# The report generator ships in the same image so the run script never needs a
+# Go toolchain on the host, and so both binaries are always built from the same
+# tree: a summary and the reader of that summary cannot drift apart.
+RUN CGO_ENABLED=0 GOOS=linux go build -o loadreport ./cmd/loadreport
+
+FROM alpine:3.20
+
+WORKDIR /app
+
+COPY --from=builder /app/loadtest /loadtest
+COPY --from=builder /app/loadreport /loadreport
+
+# Results are written here; mount a volume to keep them after --rm.
+WORKDIR /results
+
+# The default entrypoint is the generator; the report step overrides it with
+# `docker compose run --entrypoint /loadreport loadgen`.
+ENTRYPOINT ["/loadtest"]

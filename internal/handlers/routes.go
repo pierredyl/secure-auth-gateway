@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"secure-auth-gateway/internal/middleware"
 	"secure-auth-gateway/internal/redis_db"
+	"secure-auth-gateway/pkg/pasetoauth"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,13 +13,14 @@ import (
 )
 
 func RegisterSecureRoutes(r chi.Router, authHandler *AuthHandler) {
-	r.Use(chiMiddleware.Logger)
 	r.Use(chiMiddleware.Recoverer)
-	r.Use(middleware.SecurityHeaders)
+	r.Use(pasetoauth.SecurityHeaders)
 	r.Use(chiMiddleware.ClientIPFromXFF("172.16.0.0/12"))
 
 	// Quick health check endpoint, public, no rate limits.
 	r.Get("/api/v1/health", Health)
+
+	r.Get("/.well-known/paseto-public-key", PublicKeyHandler(authHandler.accessTokenMaker.PublicKey()))
 
 	// Public: rate-limited, no auth required.
 	r.Route("/api/v1/auth", func(r chi.Router) {
@@ -35,7 +37,7 @@ func RegisterSecureRoutes(r chi.Router, authHandler *AuthHandler) {
 
 	// Protected: every route past here requires a valid token.
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthenticateToken(authHandler.accessTokenMaker))
+		r.Use(pasetoauth.AuthenticateToken(authHandler.accessTokenMaker.Verifier()))
 
 		// Admin-only.
 		r.Group(func(r chi.Router) {

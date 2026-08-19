@@ -1,6 +1,13 @@
+# CPU pinning: every service under test is confined to cores 0-7 and the load
+# generator to 8-11. Without this the generator and the thing it measures compete
+# for the same 12 cores, so turning the load up both slows the server down and
+# starves it — two effects that cannot be told apart afterwards. Pinning also
+# makes a throughput number reproducible: "6,800 rps on 8 dedicated cores" is a
+# claim, "6,800 rps on my laptop" is not.
 services:
   postgres:
     image: postgres:16-alpine
+    cpuset: "0-7"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -17,6 +24,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    cpuset: "0-7"
     ports:
       - "6379:6379"
     healthcheck:
@@ -27,11 +35,17 @@ services:
 
   app1:
     build: .
+    cpuset: "0-7"
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      ACCESS_TOKEN_PRIVATE_KEY: ${ACCESS_TOKEN_PRIVATE_KEY}
       REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
+      # Go reads the host's CPU count, not the cpuset. Left alone, each of the
+      # three replicas would start 12 schedulers against the 8 cores they share
+      # — 36 threads for 8 cores, every one of them able to hold a 19 MiB
+      # Argon2id buffer. Three each keeps the total just above the core count.
+      GOMAXPROCS: "3"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,11 +54,17 @@ services:
 
   app2:
     build: .
+    cpuset: "0-7"
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      ACCESS_TOKEN_PRIVATE_KEY: ${ACCESS_TOKEN_PRIVATE_KEY}
       REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
+      # Go reads the host's CPU count, not the cpuset. Left alone, each of the
+      # three replicas would start 12 schedulers against the 8 cores they share
+      # — 36 threads for 8 cores, every one of them able to hold a 19 MiB
+      # Argon2id buffer. Three each keeps the total just above the core count.
+      GOMAXPROCS: "3"
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,11 +73,17 @@ services:
 
   app3:
     build: .
+    cpuset: "0-7"
     environment:
       DATABASE_URL: postgres://postgres:password@postgres:5432/auth_db?sslmode=disable
       REDIS_URL: redis:6379
-      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY}
+      ACCESS_TOKEN_PRIVATE_KEY: ${ACCESS_TOKEN_PRIVATE_KEY}
       REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY}
+      # Go reads the host's CPU count, not the cpuset. Left alone, each of the
+      # three replicas would start 12 schedulers against the 8 cores they share
+      # — 36 threads for 8 cores, every one of them able to hold a 19 MiB
+      # Argon2id buffer. Three each keeps the total just above the core count.
+      GOMAXPROCS: "3"
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,14 +92,57 @@ services:
 
   nginx:
     image: nginx:alpine
+    cpuset: "0-7"
     ports:
-      - "80:80"
+      - "80:80"       # redirects to 443; see nginx.conf
+      - "443:443"
+      - "8081:8081"   # stub_status, for reading accepts vs handled under load
+    ulimits:
+      # worker_connections is raised to 16384 in nginx.conf and each connection
+      # costs a file descriptor, so the fd limit has to clear it or nginx trades
+      # "worker_connections are not enough" for "Too many open files".
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Self-signed dev cert from scripts/gen-dev-cert.sh — run it before first
+      # `docker compose up` (nginx fails to start without it).
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       - app1
       - app2
       - app3
+
+  # The load generator. Not started by `docker compose up` — it sits behind the
+  # "load" profile and is invoked per run:
+  #
+  #   docker compose run --rm loadgen -url=http://nginx:80 -redis=redis:6379 \
+  #     -target=health -users=1 -duration=30s -think=0
+  #
+  # Running from in here rather than the Windows host removes Docker Desktop's
+  # port-forwarding relay from the measurement. The X-Forwarded-For spoofing still
+  # works: the source is a 172.x bridge address, which ClientIPFromXFF treats as
+  # trusted and skips, so the spoofed 198.18.x.x still becomes the limiter key.
+  loadgen:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    profiles: ["load"]
+    cpuset: "8-11"
+    environment:
+      # Go reads the host's CPU count, not the cpuset, so without this the
+      # runtime would spin up 12 schedulers for 4 usable cores and add its own
+      # scheduling delay to every measurement.
+      GOMAXPROCS: "4"
+    volumes:
+      # Raw per-request -csv dumps. Big and gitignored.
+      - ./loadtest-results:/results
+      # Per-run reports: the -json summary, the CPU samples collected alongside
+      # it, and the markdown cmd/loadreport builds from the two.
+      - ./results:/report
+    depends_on:
+      - nginx
 
 volumes:
   pgdata:
