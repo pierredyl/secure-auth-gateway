@@ -298,3 +298,59 @@ Two additions to the generator itself support this:
 - The `CONCURRENCY` environment variable supplies the default for `-users`, which is how
   `make loadtest CONCURRENCY=N` reaches the harness. An explicit `-users` on the command line
   still wins.
+
+## `-target=timing` — login failure padding check
+
+Answers a different question from the load phases: **can an attacker tell an unknown email from a
+wrong password by response time?** That is the email enumeration oracle `padFailure`
+(`internal/handlers/auth.go`) exists to close.
+
+```bash
+go run ./cmd/loadtest -target=timing -timing-samples=1200
+```
+
+It sends a balanced, shuffled mix of two request kinds and compares their latency distributions:
+
+| Group | Request | Server path |
+|---|---|---|
+| `unknown email` | address that does not exist | `pgx.ErrNoRows` branch |
+| `wrong password` | seeded account, bad password | Argon2 verify fails |
+
+### Reading the result
+
+Two gates must both pass.
+
+- **equivalence** — the bootstrap 95% CI on the median difference must sit inside
+  `-timing-tolerance` (default 3ms).
+- **liveness** — both groups' p50 must clear 20ms. A difference test alone passes *vacuously* if
+  padding is broken entirely: two paths that both return in 2ms match perfectly while the oracle
+  stands wide open. This gate is what catches that.
+
+A Mann-Whitney p-value is printed but is deliberately **not** a gate. Failing to detect a difference
+is not the same as showing there is none, and at a few hundred samples a high p-value is weak
+evidence either way. The CI is the claim being made.
+
+### Sampling design
+
+Four decisions, each fixing a way an earlier version of this harness lied:
+
+1. **Shuffled, not alternating.** Strict A/B/A/B can line one group up with one replica, since
+   nginx balances across three that each calibrated their own target. That turns a difference
+   between replicas into an apparent difference between groups.
+2. **Length-matched addresses.** The padding clock starts just before the user lookup, so the JSON
+   decode, the validator regex and `IsLocked` all run *unpadded* — and all scale with address
+   length. Probing with longer addresses than the seeded accounts measures that and reports it as a
+   code-path difference. `absentEmailFor` matches the seeded length exactly.
+3. **Serial.** Concurrency adds queueing noise that swamps the signal.
+4. **Unique spoofed IP per request**, so the 10/min limiter never fires. Any 429 aborts the run
+   rather than being recorded as a slow sample.
+
+Lockouts are handled per group: unknown addresses are unique so each has its own counter, and the
+seeded accounts' counters are cleared before every attempt and again at the end.
+
+### Negative control
+
+The check is only evidence if it can fail. Stub `padFailure` to return immediately, rebuild
+(`docker compose up -d --build app1 app2 app3`) and re-run: liveness must fail. Measured on this
+stack, an unpadded build gives a **34ms** median gap with **U=0** — the distributions do not
+overlap at all, so one request identifies an account. Revert and rebuild afterward.

@@ -62,6 +62,9 @@ type config struct {
 	csvPath  string
 	jsonPath string
 
+	timingSamples   int
+	timingTolerance time.Duration
+
 	insecureSkipVerify bool
 }
 
@@ -72,8 +75,11 @@ func (c config) openLoop() bool { return c.rate > 0 }
 // okStatus is the success code for the endpoint under test. Login answers 201,
 // not 200.
 func (c config) okStatus() int {
-	if c.target == "health" {
+	switch c.target {
+	case "health":
 		return http.StatusOK
+	case "timing":
+		return http.StatusUnauthorized
 	}
 	return http.StatusCreated
 }
@@ -81,7 +87,7 @@ func (c config) okStatus() int {
 func main() {
 	var cfg config
 	flag.StringVar(&cfg.baseURL, "url", "https://localhost:443", "base URL of the gateway (nginx; app replicas publish no ports)")
-	flag.StringVar(&cfg.target, "target", "login", "endpoint under test: login (two-phase) or health (raw capacity)")
+	flag.StringVar(&cfg.target, "target", "login", "endpoint under test: login (two-phase), health (raw capacity), or timing (login failure padding check)")
 	flag.StringVar(&cfg.path, "path", "", "override the request path (e.g. /nginx-noop); default is the target's own path")
 	flag.IntVar(&cfg.users, "users", envInt("CONCURRENCY", 100), "number of concurrent virtual users (closed loop; ignored when -rate is set). Env CONCURRENCY sets the default; an explicit -users still wins")
 	flag.Float64Var(&cfg.rate, "rate", 0, "open loop: requests per second to offer regardless of server speed (0 = closed loop)")
@@ -101,6 +107,8 @@ func main() {
 	flag.BoolVar(&cfg.keepLock, "keep-lockouts", false, "don't clear the test accounts' login lockouts before running")
 	flag.StringVar(&cfg.csvPath, "csv", "", "optional path to dump raw per-request samples")
 	flag.StringVar(&cfg.jsonPath, "json", "", "optional path to write a structured run summary for the report generator (see cmd/loadreport)")
+	flag.IntVar(&cfg.timingSamples, "timing-samples", 300, "timing target: samples per group")
+	flag.DurationVar(&cfg.timingTolerance, "timing-tolerance", 3*time.Millisecond, "timing target: largest median difference between the two failure paths that still passes")
 	flag.BoolVar(&cfg.insecureSkipVerify, "insecure-skip-verify", true, "skip TLS certificate verification — on by default because nginx presents a self-signed dev cert (scripts/gen-dev-cert.sh); set false when pointed at a real certificate")
 	flag.Parse()
 
@@ -141,8 +149,8 @@ func run(cfg config) error {
 	if !runLimiter && !runCompute {
 		return fmt.Errorf("-phase must be limiter, compute, or both (got %q)", cfg.phase)
 	}
-	if cfg.target != "login" && cfg.target != "health" {
-		return fmt.Errorf("-target must be login or health (got %q)", cfg.target)
+	if cfg.target != "login" && cfg.target != "health" && cfg.target != "timing" {
+		return fmt.Errorf("-target must be login, health, or timing (got %q)", cfg.target)
 	}
 	if cfg.rate < 0 {
 		return fmt.Errorf("-rate cannot be negative")
@@ -166,6 +174,12 @@ func run(cfg config) error {
 	// limiter phase to run — there is only one question to ask it.
 	if cfg.target == "health" {
 		return runHealthTarget(ctx, cfg, client)
+	}
+
+	// The timing target is serial and measures one request at a time, so none of
+	// the phase, concurrency or rate machinery below applies to it.
+	if cfg.target == "timing" {
+		return runTimingTarget(ctx, cfg, client)
 	}
 
 	accts := accounts()

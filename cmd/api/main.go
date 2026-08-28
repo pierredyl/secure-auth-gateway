@@ -74,10 +74,6 @@ func main() {
 		log.Fatalf("Failed to connect to Postgres")
 	}
 	fmt.Println("Connected to Postgres Database")
-	// Closed explicitly after a graceful shutdown below, not deferred here: the
-	// server's only current exit path on a startup failure is log.Fatal, which
-	// calls os.Exit and skips every deferred function — a defer this early would
-	// never actually run on that path anyway.
 
 	// Run DB Migrations
 	if err := database.RunMigrations(os.Getenv("DATABASE_URL")); err != nil {
@@ -90,6 +86,9 @@ func main() {
 		log.Fatalf("Failed to connect to Redis")
 	}
 	fmt.Println("Connected to Redis")
+
+	auth.CalibrateVerifyCost()
+	fmt.Println("Login failure delay calibrated")
 
 	// Start the AuthHandler
 	authHandler := handlers.NewAuthHandler(accessTokenSigner, refreshTokenMaker, redis_db.Client, database.Pool)
@@ -104,16 +103,6 @@ func main() {
 		port = "8080"
 	}
 
-	// Profiling endpoints, deliberately on their own listener and their own mux.
-	//
-	// They must NOT go on the chi router: nginx proxies "location /", so anything
-	// mounted there is reachable from the public port, and /debug/pprof/heap on a
-	// service that handles password hashes is a serious disclosure. Port 6060 is
-	// not published in docker-compose.yml either — reach it with
-	// `docker compose exec app1 wget -qO- localhost:6060/debug/pprof/`.
-	//
-	// The blank import registers the handlers on http.DefaultServeMux, which is
-	// why this passes nil rather than r.
 	go func() {
 		log.Println("pprof listening on :6060 (private, not proxied)")
 		if err := http.ListenAndServe(":6060", nil); err != nil {
@@ -130,9 +119,7 @@ func main() {
 	}
 
 	// ListenAndServe blocks the calling goroutine until the server stops, so it
-	// runs on its own goroutine here — that's what leaves the main goroutine free
-	// to wait on the shutdown signal below and call srv.Shutdown while the accept
-	// loop is still running. Shutdown has no other way to reach a live server.
+	// runs on its own goroutine here
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Println("Secure Auth Gateway running on port " + port + "...")

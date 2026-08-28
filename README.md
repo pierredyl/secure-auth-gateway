@@ -95,6 +95,7 @@ curl -k https://localhost/api/v1/user/health -H "Authorization: Bearer <access_t
 | `POST` | `/api/v1/auth/register` | 10/min per IP | `201` `{message, data{id, role, email, created_at}}` · `409` email exists · `422` validation · `400` malformed JSON |
 | `POST` | `/api/v1/auth/login` | 10/min per IP + per-account lockout | `201` `{message, access_token}`, sets `refresh_token` cookie · `401` failure · `429` + `Retry-After` when locked · `400` malformed input |
 | `POST` | `/api/v1/auth/refresh` | 10/min per IP | `201` `{message, access_token}`, rotates the cookie · `401` on a missing, invalid, expired or already-redeemed token |
+| `POST` | `/api/v1/auth/logout` | 10/min per IP | `200` `{message}` and clears the cookie, whether or not a live session was found |
 | `GET` | `/api/v1/admin/health` | Bearer token + `role=admin` | `200` · `401` no/invalid token · `403` wrong role |
 | `GET` | `/api/v1/user/health` | Bearer token + `role=user` | `200` · `401` no/invalid token · `403` wrong role |
 
@@ -134,7 +135,7 @@ cmd/loadreport/     Merges a run's JSON summary and CPU samples into one markdow
 internal/
   auth/             AccessTokenSigner (Ed25519), RefreshTokenMaker (v2.local), Argon2id hashing
   db/               pgx connection pool, embedded golang-migrate migrations
-  handlers/         Register, login, refresh, health, public key, role-gated stubs, routes
+  handlers/         Register, login, refresh, logout, health, public key, role-gated stubs, routes
   middleware/       Role enforcement (RequireRole)
   redis_db/         Redis client, shared httprate counter, per-account login lockout
 pkg/
@@ -240,6 +241,7 @@ CREATE TABLE users (
 | Refresh tokens | PASETO `v2.local`, encrypted, 30-day TTL, single-use rotation via Redis `GetDel` | Forgery, replay of a redeemed token, claim disclosure |
 | Key separation | Private key confined to `AccessTokenSigner`; middleware and the public endpoint receive verify-only material | A verification path being repurposed to sign |
 | Token delivery | Refresh token in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/api/v1/auth`; access token returned in the body and presented as a Bearer header | XSS refresh-token exfiltration, CSRF, cookie replay on unrelated paths |
+| Session termination | `/auth/logout` deletes the refresh token with the same atomic `GetDel` used for rotation and clears the cookie; identical `200` on every outcome | A refresh token outliving the session by up to 30 days; probing whether a stolen token is still live |
 | Authorization | `RequireRole`, exact match, fails closed on empty context | Privilege escalation |
 | Rate limiting (per IP) | 10 req/min on `/auth/*`, counter shared across replicas in Redis, client IP from `X-Forwarded-For` | Online guessing, credential stuffing |
 | Account lockout (per email) | 5 failures in 15 minutes, normalized email key, checked before the DB query and before hashing | Distributed guessing at one account |
@@ -303,9 +305,12 @@ phases and flags: [cmd/loadtest/README.md](cmd/loadtest/README.md).
   a rollover can be expressed later, but nothing consumes it yet and rotating means a restart that
   invalidates every outstanding access token.
 - **No token revocation.** A stolen access token is valid until its 15-minute expiry. Refresh tokens
-  are single-use and revoked on redemption, but access tokens are not checked against any list.
+  are single-use and revoked on redemption or logout, but access tokens are not checked against any list.
 - **No MFA.**
-- **No logout.** Refresh tokens expire or are consumed; nothing clears a session on demand.
+- **Logout ends one session, not all of them.** It revokes the refresh token presented in the cookie.
+  Revoking every session a user holds would need a `user_sessions:<userID>` index in Redis, since the
+  keys are `refresh:<tokenID>` and there is no reverse lookup. The access token issued alongside it
+  also survives until it expires — see "No token revocation" above.
 - **Register discloses whether an email exists** via `409`, which login does not. It needs its own
   throttling in production.
 - **Lockout fails open.** If Redis is unreachable, `IsLocked` returns false rather than locking out
