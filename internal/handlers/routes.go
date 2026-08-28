@@ -33,6 +33,7 @@ func RegisterSecureRoutes(r chi.Router, authHandler *AuthHandler) {
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 		r.Post("/refresh", authHandler.Refresh)
+		r.Post("/logout", authHandler.Logout)
 	})
 
 	// Protected: every route past here requires a valid token.

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -21,19 +22,6 @@ import (
 
 var validate = validator.New()
 
-// dummyHash is verified against when the email doesn't exist, so an unknown
-// address costs the same wall-clock time as a wrong password. Without it, the
-// response time alone tells an attacker which accounts are real.
-var dummyHash = mustDummyHash()
-
-func mustDummyHash() string {
-	h, err := auth.HashPassword("dummy-password-for-constant-time-login")
-	if err != nil {
-		log.Fatalf("Failed to precompute the login dummy hash: %v", err)
-	}
-	return h
-}
-
 // respondInvalidCredentials is the single response for every failed login. Both
 // callers must stay byte-identical — a difference in status, body, or headers is
 // an email enumeration oracle.
@@ -41,6 +29,51 @@ func respondInvalidCredentials(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	json.NewEncoder(w).Encode(map[string]string{"error": "Invalid email or password"})
+}
+
+func padFailure(ctx context.Context, start time.Time) {
+	remaining := auth.FailureDelayTarget() + auth.FailureJitter() - time.Since(start)
+	if remaining <= 0 {
+		return
+	}
+
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+
+	select {
+		case <-timer.C:
+		case <-ctx.Done():
+	}
+}
+
+const (
+	refreshCookieName = "refresh_token"
+	refreshCookiePath = "/api/v1/auth"
+)
+
+func setRefreshCookie(w http.ResponseWriter, token string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    token,
+		Path:     refreshCookiePath,
+		Expires:  time.Now().Add(ttl),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearRefreshCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    "",
+		Path:     refreshCookiePath,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 // Password 15 characters minimum to match NIST standards. Max is 72 for Bcrypt algorithm.
@@ -191,15 +224,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	`
 	var resp UserResponse
 	var passwordHash string
+
+	start := time.Now()
 	err := h.DB.QueryRow(r.Context(), query, req.Email).
 		Scan(&resp.ID, &resp.Email, &passwordHash, &resp.CreatedAt, &resp.Role)
 
 	// Email didn't match any in the DB
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Burn the same time a real verification would take before answering.
-			auth.VerifyPassword(req.Password, dummyHash)
 			redis_db.RecordFailure(r.Context(), req.Email)
+			padFailure(r.Context(), start)
 			respondInvalidCredentials(w)
 			return
 		}
@@ -212,6 +246,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	ok, err := auth.VerifyPassword(req.Password, passwordHash)
 	if err != nil || !ok {
 		redis_db.RecordFailure(r.Context(), req.Email)
+		padFailure(r.Context(), start)
 		respondInvalidCredentials(w)
 		return
 	}
@@ -235,18 +270,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return refresh token as HTTP cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refreshToken,
-		Path:     "/api/v1/auth",
-		Expires:  time.Now().Add(30 * 24 * time.Hour),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	setRefreshCookie(w, refreshToken, 30*24*time.Hour)
 
 	// redis SET command: SET refresh[id] [userid] 30 days
-	if err := h.redisClient.Set(r.Context(), "refresh:"+tokenID, resp.ID.String(), 30*24*time.Hour).Err(); err != nil {
+	if err := h.redisClient.Set(r.Context(), redis_db.RefreshKey(tokenID), resp.ID.String(), 30*24*time.Hour).Err(); err != nil {
 		log.Printf("login: redis Set failed for refresh token: %v", err)
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
 		return
@@ -261,11 +288,45 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-/*
-func (*AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-
+func respondLoggedOut(w http.ResponseWriter) {
+	clearRefreshCookie(w)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out."})
 }
-*/
+
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(refreshCookieName)
+	if err != nil {
+		log.Printf("logout: no refresh_token cookie: %v", err)
+		respondLoggedOut(w)
+		return
+	}
+
+	payload, err := h.refreshTokenMaker.VerifyRefreshToken(cookie.Value)
+	if err != nil {
+		log.Printf("logout: token verification failed: %v", err)
+		respondLoggedOut(w)
+		return
+	}
+
+	userID, err := h.redisClient.GetDel(r.Context(), redis_db.RefreshKey(payload.TokenID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			log.Printf("logout: token %s not found in redis (already used or expired)", payload.TokenID)
+		} else {
+			log.Printf("logout: redis GetDel error: %v", err)
+		}
+		respondLoggedOut(w)
+		return
+	}
+
+	if userID != payload.UserID {
+		log.Printf("logout: userID mismatch for token %s: redis=%s payload=%s", payload.TokenID, userID, payload.UserID)
+	}
+
+	respondLoggedOut(w)
+}
 
 // respondInvalidSession is the single response for every failed refresh check
 // (missing/invalid/expired/reused token, userID mismatch). Collapsing these
@@ -278,7 +339,7 @@ func respondInvalidSession(w http.ResponseWriter) {
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Read the cookie with the refresh token
-	refresh_token, err := r.Cookie("refresh_token")
+	refresh_token, err := r.Cookie(refreshCookieName)
 	if err != nil {
 		log.Printf("refresh: no refresh_token cookie: %v", err)
 		respondInvalidSession(w)
@@ -294,7 +355,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomically claim and invalidate the stored token (single-use rotation)
-	userID, err := h.redisClient.GetDel(r.Context(), "refresh:"+payload.TokenID).Result()
+	userID, err := h.redisClient.GetDel(r.Context(), redis_db.RefreshKey(payload.TokenID)).Result()
 	if err != nil {
 		if err == redis.Nil {
 			log.Printf("refresh: token %s not found in redis (already used or expired)", payload.TokenID)
@@ -341,22 +402,14 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set the new refresh token
-	if err := h.redisClient.Set(r.Context(), "refresh:"+new_refresh_token_ID, payload.UserID, remaining_time_refresh_token).Err(); err != nil {
+	if err := h.redisClient.Set(r.Context(), redis_db.RefreshKey(new_refresh_token_ID), payload.UserID, remaining_time_refresh_token).Err(); err != nil {
 		log.Printf("refresh: redis Set failed for new token: %v", err)
 		http.Error(w, `{"error": "Internal Server Error"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Return refresh token as HTTP cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    new_refresh_token,
-		Path:     "/api/v1/auth",
-		Expires:  time.Now().Add(remaining_time_refresh_token),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	})
+	setRefreshCookie(w, new_refresh_token, remaining_time_refresh_token)
 
 	// Return access token in JSON response
 	w.Header().Set("Content-Type", "application/json")
